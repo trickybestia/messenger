@@ -3,28 +3,16 @@ from typing import Awaitable, Callable, Optional
 
 from exceptions import ProtocolException
 from model import Id
-from network import Packet
-from network.streams import (
-    CallbackPacketStream,
-    PacketStream,
-    SimplePacketSplitterStream,
-)
+from network import Packet, packets
+from network.streams import PacketStream, SimplePacketSplitterStream
 
-from .exceptions import (
-    ClientAlreadyAuthorizedException,
-    ClientAlreadyConnectedException,
-    ClientNotAuthorizedException,
-    ClientNotConnectedException,
-    InvalidRangeException,
-    LoginFailException,
-    NoSuchClientException,
-)
+from .exceptions import *
 
 
 class Client:
     _id: Optional[Id]
 
-    stream: Optional[CallbackPacketStream]
+    stream: Optional[PacketStream]
     on_message: Optional[Callable[[bytes], Awaitable]]
 
     def __init__(self):
@@ -60,15 +48,16 @@ class Client:
         if self._id is not None:
             raise ClientAlreadyAuthorizedException()
 
-        await self.stream.write(Packet("Register", {"password": password}))
+        await self.stream.write(packets.Register(password))
 
-        packet = await self.stream.read()
+        raw_packet = await self.stream.read()
 
-        match packet.type:
-            case "RegisterSuccess":
-                self._id = packet["id"]
-            case _:
-                raise ProtocolException()
+        if (
+            packet := Packet.try_deserialize(raw_packet, packets.RegisterSuccess)
+        ) is not None:
+            self._id = packet.id
+        else:
+            raise ProtocolException()
 
     async def login(self, id: Id, password: str):
         """
@@ -84,17 +73,16 @@ class Client:
         if self._id is not None:
             raise ClientAlreadyAuthorizedException()
 
-        await self.stream.write(Packet("Login", {"id": id, "password": password}))
+        await self.stream.write(packets.Login(id, password))
 
-        packet = await self.stream.read()
+        raw_packet = await self.stream.read()
 
-        match packet.type:
-            case "LoginSuccess":
-                self._id = id
-            case "LoginFail":
-                raise LoginFailException()
-            case _:
-                raise ProtocolException()
+        if Packet.try_deserialize(raw_packet, packets.LoginSuccess) is not None:
+            self._id = id
+        elif Packet.try_deserialize(raw_packet, packets.LoginFail) is not None:
+            raise LoginFailException()
+        else:
+            raise ProtocolException()
 
     async def get_messages_count(self) -> int:
         """
@@ -107,15 +95,18 @@ class Client:
         if self._id is None:
             raise ClientNotAuthorizedException()
 
-        await self.stream.write(Packet("GetMessagesCount"))
+        await self.stream.write(packets.GetMessagesCount())
 
-        packet = await self.stream.read()
+        raw_packet = await self.stream.read()
 
-        match packet.type:
-            case "GetMessagesCountSuccess":
-                return packet["messages_count"]
-            case _:
-                raise ProtocolException()
+        if (
+            packet := Packet.try_deserialize(
+                raw_packet, packets.GetMessagesCountSuccess
+            )
+        ) is not None:
+            return packet.messages_count
+        else:
+            raise ProtocolException()
 
     async def send_message(self, receiver_id: Id, content: bytes):
         """
@@ -131,19 +122,19 @@ class Client:
         if self._id is None:
             raise ClientNotAuthorizedException()
 
-        await self.stream.write(
-            Packet("SendMessage", {"receiver_id": receiver_id, "content": content})
-        )
+        await self.stream.write(packets.SendMessage(receiver_id, content))
 
-        packet = await self.stream.read()
+        raw_packet = await self.stream.read()
 
-        match packet.type:
-            case "SendMessageSuccess":
-                ...
-            case "SendMessageFailNoSuchClient":
-                raise NoSuchClientException()
-            case _:
-                raise ProtocolException()
+        if Packet.try_deserialize(raw_packet, packets.SendMessageSuccess) is not None:
+            ...
+        elif (
+            Packet.try_deserialize(raw_packet, packets.SendMessageFailNoSuchClient)
+            is not None
+        ):
+            raise NoSuchClientException()
+        else:
+            raise ProtocolException()
 
     async def get_messages(
         self, first_message_index: int, last_message_index: int
@@ -162,24 +153,22 @@ class Client:
             raise ClientNotAuthorizedException()
 
         await self.stream.write(
-            Packet(
-                "GetMessages",
-                {
-                    "first_message_index": first_message_index,
-                    "last_message_index": last_message_index,
-                },
-            )
+            packets.GetMessages(first_message_index, last_message_index)
         )
 
-        packet = await self.stream.read()
+        raw_packet = await self.stream.read()
 
-        match packet.type:
-            case "GetMessagesSuccess":
-                return packet["messages"]
-            case "GetMessagesFailInvalidRange":
-                raise InvalidRangeException()
-            case _:
-                raise ProtocolException()
+        if (
+            packet := Packet.try_deserialize(raw_packet, packets.GetMessagesSuccess)
+        ) is not None:
+            return packet.messages
+        elif (
+            Packet.try_deserialize(raw_packet, packets.GetMessagesFailInvalidRange)
+            is not None
+        ):
+            raise InvalidRangeException()
+        else:
+            raise ProtocolException()
 
     async def download_messages(self):
         """
@@ -210,11 +199,9 @@ class Client:
             raise ClientAlreadyConnectedException()
 
         reader, writer = await open_connection(host, port)
-        self.stream = CallbackPacketStream(
-            PacketStream(SimplePacketSplitterStream(reader, writer))
-        )
+        self.stream = PacketStream(SimplePacketSplitterStream(reader, writer))
 
-        self.stream.callbacks["NewMessage"] = self._on_message
+        self.stream.callbacks[packets.NewMessage] = self._on_message
 
     async def disconnect(self):
         """
@@ -228,6 +215,6 @@ class Client:
                 self.stream = None
                 self._id = None
 
-    async def _on_message(self, packet: Packet):
+    async def _on_message(self, packet: packets.NewMessage):
         if self.on_message is not None:
-            await self.on_message(packet["content"])
+            await self.on_message(packet.content)

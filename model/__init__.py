@@ -1,1 +1,1 @@
-from .id import Id
+from .id import Id, random_id

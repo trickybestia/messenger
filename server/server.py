@@ -10,9 +10,12 @@ from typing import Final
 
 from exceptions import ProtocolException
 from model import Id
-from network import Packet
-from network.streams import PacketStream, SimplePacketSplitterStream
-from network.streams.stream import StreamClosedException
+from network import Packet, packets
+from network.streams import (
+    PacketStream,
+    SimplePacketSplitterStream,
+    StreamClosedException,
+)
 
 from .database import Database
 from .database.exceptions import ClientNotExistsException, InvalidRangeException
@@ -47,31 +50,32 @@ class Server:
         """
 
         while True:
-            packet = await stream.read()
+            raw_packet = await stream.read()
 
-            match packet.type:
-                case "Register":
-                    client_id = self._database.register_client(packet["password"])
+            if (
+                packet := Packet.try_deserialize(raw_packet, packets.Register)
+            ) is not None:
+                client_id = self._database.register_client(packet.password)
 
-                    await stream.write(Packet("RegisterSuccess", {"id": client_id}))
+                await stream.write(packets.RegisterSuccess(client_id))
 
-                    return client_id
+                return client_id
+            elif (
+                packet := Packet.try_deserialize(raw_packet, packets.Login)
+            ) is not None:
+                if (
+                    packet.id not in self._incoming_message_queues
+                    and self._database.check_password(packet.id, packet.password)
+                ):
+                    await stream.write(packets.LoginSuccess())
 
-                case "Login":
-                    if packet[
-                        "id"
-                    ] not in self._incoming_message_queues and self._database.check_password(
-                        packet["id"], packet["password"]
-                    ):
-                        await stream.write(Packet("LoginSuccess"))
+                    return packet.id
+                else:
+                    await stream.write(packets.LoginFail())
 
-                        return packet["id"]
-                    else:
-                        await stream.write(Packet("LoginFail"))
-
-                        raise LoginFailException()
-                case _:
-                    raise ProtocolException()
+                    raise LoginFailException()
+            else:
+                raise ProtocolException()
 
     async def _handle_connection(self, reader: StreamReader, writer: StreamWriter):
         """
@@ -90,74 +94,66 @@ class Server:
             self._incoming_message_queues[client_id] = incoming_message_queue
 
             async def handle_incoming_messages():
-                try:
-                    message = await incoming_message_queue.get()
+                while True:
+                    try:
+                        message = await incoming_message_queue.get()
 
-                    await stream.write(Packet("NewMessage", {"content": message}))
-                except CancelledError:
-                    ...
+                        await stream.write(packets.NewMessage(message))
+                    except CancelledError:
+                        break
 
             incoming_messages_handler = create_task(handle_incoming_messages())
 
             try:
                 while True:
-                    packet = await stream.read()
+                    raw_packet = await stream.read()
 
-                    match packet.type:
-                        case "GetMessagesCount":
-                            messages_count = self._database.get_messages_count(
-                                client_id
+                    if (
+                        Packet.try_deserialize(raw_packet, packets.GetMessagesCount)
+                        is not None
+                    ):
+                        messages_count = self._database.get_messages_count(client_id)
+
+                        await stream.write(
+                            packets.GetMessagesCountSuccess(messages_count)
+                        )
+                    elif (
+                        packet := Packet.try_deserialize(
+                            raw_packet, packets.SendMessage
+                        )
+                    ) is not None:
+                        try:
+                            self._database.add_message(
+                                packet.receiver_id, packet.content
                             )
 
-                            await stream.write(
-                                Packet(
-                                    "GetMessagesCountSuccess",
-                                    {"messages_count": messages_count},
-                                )
+                            if packet.receiver_id in self._incoming_message_queues:
+                                await self._incoming_message_queues[
+                                    packet.receiver_id
+                                ].put(packet.content)
+                        except ClientNotExistsException:
+                            await stream.write(packets.SendMessageFailNoSuchClient())
+                        else:
+                            await stream.write(packets.SendMessageSuccess())
+                    elif (
+                        packet := Packet.try_deserialize(
+                            raw_packet, packets.GetMessages
+                        )
+                    ) is not None:
+                        try:
+                            messages = self._database.get_messages(
+                                client_id,
+                                packet.first_message_index,
+                                packet.last_message_index,
                             )
-                        case "SendMessage":
-                            try:
-                                self._database.add_message(
-                                    packet["receiver_id"], packet["content"]
-                                )
-
-                                if (
-                                    packet["receiver_id"]
-                                    in self._incoming_message_queues
-                                ):
-                                    await self._incoming_message_queues[
-                                        packet["receiver_id"]
-                                    ].put(packet["content"])
-                            except ClientNotExistsException:
-                                await stream.write(
-                                    Packet("SendMessageFailNoSuchClient")
-                                )
-                            else:
-                                await stream.write(Packet("SendMessageSuccess"))
-                        case "GetMessages":
-                            try:
-                                messages = self._database.get_messages(
-                                    client_id,
-                                    packet["first_message_index"],
-                                    packet["last_message_index"],
-                                )
-                            except InvalidRangeException:
-                                await stream.write(
-                                    Packet("GetMessagesFailInvalidRange")
-                                )
-                            else:
-                                await stream.write(
-                                    Packet("GetMessagesSuccess", {"messages": messages})
-                                )
-                        case _:
-                            raise ProtocolException()
+                        except InvalidRangeException:
+                            await stream.write(packets.GetMessagesFailInvalidRange())
+                        else:
+                            await stream.write(packets.GetMessagesSuccess(messages))
+                    else:
+                        raise ProtocolException()
             finally:
                 incoming_messages_handler.cancel()
                 del self._incoming_message_queues[client_id]
         except StreamClosedException:
             ...
-        finally:
-            try:
-                await stream.close()
-            except Exception:
-                ...

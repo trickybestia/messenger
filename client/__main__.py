@@ -1,4 +1,6 @@
-from asyncio import run, get_event_loop
+from asyncio import run
+
+from aioconsole import ainput
 
 from client.client import Client
 from model import Id
@@ -18,7 +20,7 @@ async def main():
     client.on_message = on_message
 
     while True:
-        line = (await get_event_loop().run_in_executor(None, input)).split(maxsplit=1)
+        line = (await ainput()).split(maxsplit=1)
 
         await client.send_message(Id(line[0]), line[1].encode("utf-8"))
 

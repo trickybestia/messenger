@@ -1,6 +1,6 @@
 from typing import Final
 
-from model import Id
+from model import Id, random_id
 
 from .database import Database
 from .exceptions import ClientNotExistsException, InvalidRangeException
@@ -15,7 +15,7 @@ class MemoryDatabase(Database):
         self._messages = {}
 
     def register_client(self, password: str) -> Id:
-        id = Id.random()
+        id = random_id()
 
         self._clients[id] = password
         self._messages[id] = []

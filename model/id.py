@@ -1,9 +1,9 @@
 from os import urandom
 
+Id = int
 
-class Id(int):
-    @classmethod
-    def random(cls) -> "Id":
-        bytes = urandom(8)
 
-        return Id.from_bytes(bytes, "little", signed=True)
+def random_id() -> Id:
+    bytes = urandom(8)
+
+    return Id.from_bytes(bytes, "little", signed=True)

@@ -1,37 +1,38 @@
-from dataclasses import asdict, dataclass, field
-from typing import Any, Optional
+from dataclasses import asdict, dataclass
+from typing import Optional, Type, TypeVar
 
-from msgpack import packb, unpackb
+from dacite import DaciteError, from_dict
+from msgpack import packb
 
 from exceptions import ProtocolException
+
+PacketType = TypeVar("PacketType", bound="Packet")
 
 
 @dataclass(frozen=True)
 class Packet:
-    type: str
-    payload: Optional[dict] = field(default=None)
-
     def serialize(self) -> bytes:
         """
         Сериализует пакет.
         """
 
-        return packb(asdict(self))
+        data = asdict(self)
+        data["type"] = self.__class__.__name__
 
-    @classmethod
-    def deserialize(cls, data: bytes) -> "Packet":
-        """
-        Десериализует пакет.
+        return packb(data)
 
-        :param data: сериализованный пакет
-        """
+    @staticmethod
+    def try_deserialize(data: dict, type: Type[PacketType]) -> Optional[PacketType]:
+        if "type" not in data or data["type"] != type.__name__:
+            return None
 
-        packet_dict = unpackb(data)
+        data = dict(data)
 
-        return Packet(packet_dict["type"], packet_dict["payload"])
+        del data["type"]
 
-    def __getitem__(self, key: str) -> Any:
-        if self.payload is None or key not in self.payload:
+        try:
+            packet = from_dict(type, data)
+
+            return packet
+        except DaciteError:
             raise ProtocolException()
-
-        return self.payload[key]

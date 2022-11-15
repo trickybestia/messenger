@@ -5,7 +5,7 @@ from model import Id
 
 class Database(ABC):
     @abstractmethod
-    def register_client(self, password: str) -> Id:
+    def register_client(self, password: bytes) -> Id:
         """
         Регистрирует нового клиента и возвращает его ID.
 
@@ -21,7 +21,7 @@ class Database(ABC):
         """
 
     @abstractmethod
-    def check_password(self, client_id: Id, password: str) -> bool:
+    def check_password(self, client_id: Id, password: bytes) -> bool:
         """
         Проверяет, совпадает ли реальный пароль клиента с аргументом.
 

@@ -35,7 +35,7 @@ class Client:
 
         return self.stream is not None
 
-    async def register(self, password: str):
+    async def register(self, password: bytes):
         """
         Регистрирует нового пользователя на сервере.
 
@@ -59,7 +59,7 @@ class Client:
         else:
             raise ProtocolException()
 
-    async def login(self, id: Id, password: str):
+    async def login(self, id: Id, password: bytes):
         """
         Авторизует клиента на сервере.
 

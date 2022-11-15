@@ -7,14 +7,14 @@ from .exceptions import ClientNotExistsException, InvalidRangeException
 
 
 class MemoryDatabase(Database):
-    _clients: Final[dict[Id, str]]
+    _clients: Final[dict[Id, bytes]]
     _messages: Final[dict[Id, list[bytes]]]
 
     def __init__(self):
         self._clients = {}
         self._messages = {}
 
-    def register_client(self, password: str) -> Id:
+    def register_client(self, password: bytes) -> Id:
         id = random_id()
 
         self._clients[id] = password
@@ -29,7 +29,7 @@ class MemoryDatabase(Database):
         del self._clients[id]
         del self._messages[id]
 
-    def check_password(self, client_id: Id, password: str) -> bool:
+    def check_password(self, client_id: Id, password: bytes) -> bool:
         if client_id not in self._clients:
             raise ClientNotExistsException()
 

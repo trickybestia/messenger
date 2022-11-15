@@ -10,7 +10,7 @@ async def main():
     client = Client()
 
     await client.connect("127.0.0.1", 8315)
-    await client.register("1234")
+    await client.register(b"1234")
 
     print(client.get_id())
 

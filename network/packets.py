@@ -7,7 +7,7 @@ from .packet import Packet
 
 @dataclass(frozen=True)
 class Register(Packet):
-    password: str
+    password: bytes
 
 
 @dataclass(frozen=True)
@@ -18,7 +18,7 @@ class RegisterSuccess(Packet):
 @dataclass(frozen=True)
 class Login(Packet):
     id: Id
-    password: str
+    password: bytes
 
 
 @dataclass(frozen=True)

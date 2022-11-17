@@ -1,10 +1,17 @@
 from asyncio import open_connection
 from typing import Awaitable, Callable, Optional
 
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
+
 from exceptions import ProtocolException
 from model import Id
 from network import Packet, packets
-from network.streams import PacketStream, SimplePacketSplitterStream
+from network.streams.encrypted_packet_splitter_stream import (
+    EncryptedPacketSplitterStream,
+    exchange_key,
+)
+from network.streams.packet_stream import PacketStream
+from network.streams.simple_packet_splitter_stream import SimplePacketSplitterStream
 
 from .exceptions import *
 
@@ -187,20 +194,31 @@ class Client:
             if self.on_message is not None:
                 await self.on_message(message)
 
-    async def connect(self, host: str, port: int):
+    async def connect(self, host: str, port: int, server_key: RSAPublicKey):
         """
         Подлкючается к указанному серверу.
 
-        :param host:
-        :param port:
+        :param host: имя хоста сервера
+        :param port: порт сервера
+        :param server_key: публичный ключ сервера
         """
 
         if self.stream is not None:
             raise ClientAlreadyConnectedException()
 
         reader, writer = await open_connection(host, port)
-        self.stream = PacketStream(SimplePacketSplitterStream(reader, writer))
+        stream = SimplePacketSplitterStream(reader, writer)
 
+        key_exchange_result = await exchange_key(stream, server_key)
+
+        self.stream = PacketStream(
+            EncryptedPacketSplitterStream(
+                stream,
+                key_exchange_result.key,
+                key_exchange_result.our_nonce,
+                key_exchange_result.peer_nonce,
+            )
+        )
         self.stream.callbacks[packets.NewMessage] = self._on_message
 
     async def disconnect(self):

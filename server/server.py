@@ -8,14 +8,18 @@ from asyncio import (
 from asyncio.queues import Queue
 from typing import Final
 
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
+
 from exceptions import ProtocolException
 from model import Id
 from network import Packet, packets
-from network.streams import (
-    PacketStream,
-    SimplePacketSplitterStream,
-    StreamClosedException,
+from network.streams.encrypted_packet_splitter_stream import (
+    EncryptedPacketSplitterStream,
+    accept_key_exchange,
 )
+from network.streams.packet_stream import PacketStream
+from network.streams.simple_packet_splitter_stream import SimplePacketSplitterStream
+from network.streams.stream import StreamClosedException
 
 from .database import Database
 from .database.exceptions import ClientNotExistsException, InvalidRangeException
@@ -25,10 +29,12 @@ from .exceptions import LoginFailException
 class Server:
     _database: Final[Database]
     _incoming_message_queues: Final[dict[Id, Queue]]
+    _key: Final[RSAPrivateKey]
 
-    def __init__(self, database: Database):
+    def __init__(self, database: Database, key: RSAPrivateKey):
         self._database = database
         self._incoming_message_queues = {}
+        self._key = key
 
     async def handle_connections(self, host: str, port: int):
         """
@@ -85,7 +91,16 @@ class Server:
         :param writer: записывающий поток
         """
 
-        stream = PacketStream(SimplePacketSplitterStream(reader, writer))
+        stream = SimplePacketSplitterStream(reader, writer)
+        key_exchange_result = await accept_key_exchange(stream, self._key)
+        stream = PacketStream(
+            EncryptedPacketSplitterStream(
+                stream,
+                key_exchange_result.key,
+                key_exchange_result.our_nonce,
+                key_exchange_result.peer_nonce,
+            )
+        )
 
         try:
             client_id = await self._register_or_login(stream)

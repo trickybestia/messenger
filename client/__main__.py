@@ -3,13 +3,16 @@ from asyncio import run
 from aioconsole import ainput
 
 from client.client import Client
+from load_key import load_key
 from model import Id
 
 
 async def main():
     client = Client()
 
-    await client.connect("127.0.0.1", 8315)
+    await client.connect(
+        "127.0.0.1", 8315, load_key("/home/trickybestia/server.pem").public_key()
+    )
     await client.register(b"1234")
 
     print(client.get_id())

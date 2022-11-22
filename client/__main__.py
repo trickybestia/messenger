@@ -4,7 +4,7 @@ from aioconsole import ainput
 
 from client.client import Client
 from load_key import load_key
-from model import Id
+from model import Id, Message
 
 
 async def main():
@@ -17,8 +17,8 @@ async def main():
 
     print(client.get_id())
 
-    async def on_message(content: bytes):
-        print(content.decode("utf-8"))
+    async def on_message(message: Message):
+        print(message.sender, message.content.decode("utf-8"))
 
     client.on_message = on_message
 

@@ -5,6 +5,7 @@ from dacite import DaciteError, from_dict
 from msgpack import packb
 
 from exceptions import ProtocolException
+from model import Id
 
 PacketType = TypeVar("PacketType", bound="Packet")
 
@@ -36,3 +37,8 @@ class Packet:
             return packet
         except DaciteError:
             raise ProtocolException()
+
+
+@dataclass(frozen=True)
+class RequestPacket(Packet):
+    request_id: Id

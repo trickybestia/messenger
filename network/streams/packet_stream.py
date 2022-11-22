@@ -1,12 +1,13 @@
-from asyncio import create_task
+from asyncio import Event, create_task
 from asyncio.queues import Queue
 from typing import Awaitable, Callable, Final
 
 from msgpack import unpackb
 
+from model import Id
 from network import Packet
 
-from ..packet import PacketType
+from ..packet import PacketType, RequestPacket
 from .packet_splitter_stream import PacketSplitterStream
 from .stream import Stream, StreamClosedException
 
@@ -14,16 +15,56 @@ from .stream import Stream, StreamClosedException
 class PacketStream(Stream):
     _stream: Final[PacketSplitterStream[bytes]]
     _packets: Final[Queue[dict]]
+    _request_callbacks: Final[dict[Id, Callable[[dict], Awaitable]]]
 
-    callbacks: Final[dict[PacketType, Callable[[PacketType], Awaitable]]]
+    incoming_packet_callbacks: Final[
+        dict[PacketType, Callable[[PacketType], Awaitable]]
+    ]
 
     def __init__(self, stream: PacketSplitterStream[bytes]):
         self._stream = stream
         self._packets = Queue()
+        self._request_callbacks = {}
 
-        self.callbacks = {}
+        self.incoming_packet_callbacks = {}
 
         create_task(self._read_packets())
+
+    def register_request_callback(
+        self, request_id: Id, callback: Callable[[dict], Awaitable]
+    ):
+        """
+        Регистрирует одноразовый callback для запроса с заданным ID.
+
+        :param request_id: ID запроса
+        :param callback: функция, вызываемая при получении ответа на запрос
+        :return:
+        """
+
+        self._request_callbacks[request_id] = callback
+
+    async def make_request(self, packet: RequestPacket) -> dict:
+        """
+        Отправляет запрос и ожидает получения его результата.
+
+        :param packet: пакет
+        """
+
+        response = None
+        response_received_event = Event()
+
+        async def callback(raw_response: dict):
+            nonlocal response
+
+            response = raw_response
+            response_received_event.set()
+
+        self.register_request_callback(packet.request_id, callback)
+
+        await self.write(packet)
+
+        await response_received_event.wait()
+        return response
 
     async def _read_packets(self):
         while True:
@@ -31,7 +72,16 @@ class PacketStream(Stream):
                 packet_bytes = await self._stream.read()
                 raw_packet = unpackb(packet_bytes)
 
-                for packet_type, callback in self.callbacks.items():
+                if (
+                    "request_id" in raw_packet
+                    and raw_packet["request_id"] in self._request_callbacks
+                ):
+                    await self._request_callbacks[raw_packet["request_id"]](raw_packet)
+                    del self._request_callbacks[raw_packet["request_id"]]
+
+                    continue
+
+                for packet_type, callback in self.incoming_packet_callbacks.items():
                     if (
                         packet := Packet.try_deserialize(raw_packet, packet_type)
                     ) is not None:

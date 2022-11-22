@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 
-from model import Id
+from model import ChannelId, Id, Message
 
 
 class Database(ABC):
@@ -30,28 +30,39 @@ class Database(ABC):
         """
 
     @abstractmethod
-    def add_message(self, receiver_id: Id, content: bytes):
+    def add_message(self, sender_id: Id, receiver_id: Id, content: bytes):
         """
-        Добавляет новое сообщение в очередь входящих сообщений.
+        Добавляет новое сообщение в канал.
 
         :param receiver_id: ID получателя
+        :param sender_id: ID отправителя
         :param content: содержимое сообщения
         """
 
     @abstractmethod
-    def get_messages_count(self, client_id: Id) -> int:
+    def get_messages_count(self, channel_id: ChannelId) -> int:
         """
-        Возвращает количество сообщений в списке клиента.
+        Возвращает количество сообщений в канале.
 
-        :param client_id: ID клиента
+        :param channel_id: ID канала
         """
 
     @abstractmethod
-    def get_messages(self, client_id: Id, first_message_index: int, last_message_index: int) -> list[bytes]:
+    def get_messages(
+        self, channel_id: ChannelId, first_message_index: int, count: int
+    ) -> list[Message]:
         """
-        Возвращает список сообщений, находящихся в заданном диапазоне.
+        Возвращает список сообщений канала, находящихся в заданном диапазоне.
 
-        :param last_message_index: индекс первого сообщения
-        :param first_message_index: индекс последнего сообщения
+        :param channel_id: ID канала
+        :param first_message_index: индекс первого сообщения
+        :param count: количество сообщений
+        """
+
+    @abstractmethod
+    def get_channel_peers(self, client_id: Id) -> list[Id]:
+        """
+        Возвращает список ID клиентов, с которыми указанный клиент состоит в канале.
+
         :param client_id: ID клиента
         """

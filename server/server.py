@@ -11,7 +11,7 @@ from typing import Final
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 
 from exceptions import ProtocolException
-from model import Id
+from model import ChannelId, Id, Message
 from network import Packet, packets
 from network.streams.encrypted_packet_splitter_stream import (
     EncryptedPacketSplitterStream,
@@ -28,7 +28,7 @@ from .exceptions import LoginFailException
 
 class Server:
     _database: Final[Database]
-    _incoming_message_queues: Final[dict[Id, Queue]]
+    _incoming_message_queues: Final[dict[Id, Queue[Message]]]
     _key: Final[RSAPrivateKey]
 
     def __init__(self, database: Database, key: RSAPrivateKey):
@@ -124,13 +124,18 @@ class Server:
                     raw_packet = await stream.read()
 
                     if (
-                        Packet.try_deserialize(raw_packet, packets.GetMessagesCount)
-                        is not None
-                    ):
-                        messages_count = self._database.get_messages_count(client_id)
+                        packet := Packet.try_deserialize(
+                            raw_packet, packets.GetMessagesCount
+                        )
+                    ) is not None:
+                        messages_count = self._database.get_messages_count(
+                            ChannelId.from_clients((client_id, packet.peer_id))
+                        )
 
                         await stream.write(
-                            packets.GetMessagesCountSuccess(messages_count)
+                            packets.GetMessagesCountSuccess(
+                                messages_count, packet.request_id
+                            )
                         )
                     elif (
                         packet := Packet.try_deserialize(
@@ -139,17 +144,21 @@ class Server:
                     ) is not None:
                         try:
                             self._database.add_message(
-                                packet.receiver_id, packet.content
+                                client_id, packet.receiver_id, packet.content
                             )
 
                             if packet.receiver_id in self._incoming_message_queues:
                                 await self._incoming_message_queues[
                                     packet.receiver_id
-                                ].put(packet.content)
+                                ].put(Message(client_id, packet.content))
                         except ClientNotExistsException:
-                            await stream.write(packets.SendMessageFailNoSuchClient())
+                            await stream.write(
+                                packets.SendMessageFailNoSuchClient(packet.request_id)
+                            )
                         else:
-                            await stream.write(packets.SendMessageSuccess())
+                            await stream.write(
+                                packets.SendMessageSuccess(packet.request_id)
+                            )
                     elif (
                         packet := Packet.try_deserialize(
                             raw_packet, packets.GetMessages
@@ -157,14 +166,26 @@ class Server:
                     ) is not None:
                         try:
                             messages = self._database.get_messages(
-                                client_id,
+                                ChannelId.from_clients((client_id, packet.peer_id)),
                                 packet.first_message_index,
-                                packet.last_message_index,
+                                packet.count,
                             )
                         except InvalidRangeException:
-                            await stream.write(packets.GetMessagesFailInvalidRange())
+                            await stream.write(
+                                packets.GetMessagesFailInvalidRange(packet.request_id)
+                            )
                         else:
-                            await stream.write(packets.GetMessagesSuccess(messages))
+                            await stream.write(
+                                packets.GetMessagesSuccess(packet.request_id, messages)
+                            )
+                    elif (
+                        packet := Packet.try_deserialize(
+                            raw_packet, packets.GetChannelPeers
+                        )
+                    ) is not None:
+                        peers = self._database.get_channel_peers(client_id)
+
+                        await stream.write(packets.GetChannelPeersSuccess(packet.request_id, peers))
                     else:
                         raise ProtocolException()
             finally:

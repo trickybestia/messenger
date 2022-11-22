@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 
-from model import Id
+from model import Id, Message
 
-from .packet import Packet
+from .packet import Packet, RequestPacket
 
 
 @dataclass(frozen=True)
@@ -37,47 +37,64 @@ class LoginFail(Packet):
 
 
 @dataclass(frozen=True)
-class GetMessagesCount(Packet):
-    ...
+class GetMessagesCount(RequestPacket):
+    request_id: Id
+    peer_id: Id
 
 
 @dataclass(frozen=True)
-class GetMessagesCountSuccess(Packet):
+class GetMessagesCountSuccess(RequestPacket):
+    request_id: Id
     messages_count: int
 
 
 @dataclass(frozen=True)
-class SendMessage(Packet):
+class SendMessage(RequestPacket):
+    request_id: Id
     receiver_id: Id
     content: bytes
 
 
 @dataclass(frozen=True)
-class SendMessageSuccess(Packet):
-    ...
+class SendMessageSuccess(RequestPacket):
+    request_id: Id
 
 
 @dataclass(frozen=True)
-class SendMessageFailNoSuchClient(Packet):
-    ...
+class SendMessageFailNoSuchClient(RequestPacket):
+    request_id: Id
 
 
 @dataclass(frozen=True)
-class GetMessages(Packet):
+class GetMessages(RequestPacket):
+    request_id: Id
+    peer_id: int
     first_message_index: int
-    last_message_index: int
+    count: int
 
 
 @dataclass(frozen=True)
-class GetMessagesSuccess(Packet):
-    messages: list[bytes]
+class GetMessagesSuccess(RequestPacket):
+    request_id: Id
+    messages: list[Message]
 
 
 @dataclass(frozen=True)
-class GetMessagesFailInvalidRange(Packet):
-    ...
+class GetMessagesFailInvalidRange(RequestPacket):
+    request_id: Id
 
 
 @dataclass(frozen=True)
 class NewMessage(Packet):
-    content: bytes
+    message: Message
+
+
+@dataclass(frozen=True)
+class GetChannelPeers(RequestPacket):
+    request_id: Id
+
+
+@dataclass(frozen=True)
+class GetChannelPeersSuccess(RequestPacket):
+    request_id: Id
+    peers: list[Id]

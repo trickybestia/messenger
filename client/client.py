@@ -4,7 +4,7 @@ from typing import Awaitable, Callable, Optional
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 
 from exceptions import ProtocolException
-from model import Id
+from model import Id, Message, random_id
 from network import Packet, packets
 from network.streams.encrypted_packet_splitter_stream import (
     EncryptedPacketSplitterStream,
@@ -20,7 +20,7 @@ class Client:
     _id: Optional[Id]
 
     stream: Optional[PacketStream]
-    on_message: Optional[Callable[[bytes], Awaitable]]
+    on_message: Optional[Callable[[Message], Awaitable]]
 
     def __init__(self):
         self._id = None
@@ -91,9 +91,11 @@ class Client:
         else:
             raise ProtocolException()
 
-    async def get_messages_count(self) -> int:
+    async def get_messages_count(self, peer_id: Id) -> int:
         """
-        Возвращает количество сообщений в списке клиента.
+        Возвращает количество сообщений в канале с указанным собеседником.
+
+        :param peer_id: ID собеседника
         """
 
         if self.stream is None:
@@ -102,14 +104,12 @@ class Client:
         if self._id is None:
             raise ClientNotAuthorizedException()
 
-        await self.stream.write(packets.GetMessagesCount())
-
-        raw_packet = await self.stream.read()
+        response = await self.stream.make_request(
+            packets.GetMessagesCount(random_id(), peer_id)
+        )
 
         if (
-            packet := Packet.try_deserialize(
-                raw_packet, packets.GetMessagesCountSuccess
-            )
+            packet := Packet.try_deserialize(response, packets.GetMessagesCountSuccess)
         ) is not None:
             return packet.messages_count
         else:
@@ -129,14 +129,14 @@ class Client:
         if self._id is None:
             raise ClientNotAuthorizedException()
 
-        await self.stream.write(packets.SendMessage(receiver_id, content))
+        response = await self.stream.make_request(
+            packets.SendMessage(random_id(), receiver_id, content)
+        )
 
-        raw_packet = await self.stream.read()
-
-        if Packet.try_deserialize(raw_packet, packets.SendMessageSuccess) is not None:
+        if Packet.try_deserialize(response, packets.SendMessageSuccess) is not None:
             ...
         elif (
-            Packet.try_deserialize(raw_packet, packets.SendMessageFailNoSuchClient)
+            Packet.try_deserialize(response, packets.SendMessageFailNoSuchClient)
             is not None
         ):
             raise NoSuchClientException()
@@ -144,13 +144,15 @@ class Client:
             raise ProtocolException()
 
     async def get_messages(
-        self, first_message_index: int, last_message_index: int
-    ) -> list[bytes]:
+        self, peer_id: Id, first_message_index: int, count: int
+    ) -> list[Message]:
         """
-        Возвращает список входящих сообщений, находящихся в заданном диапазоне.
+        Возвращает список входящих сообщений из канала с указанным собеседником,
+        находящихся в заданном диапазоне.
 
+        :param peer_id: ID собеседника
         :param first_message_index: индекс первого сообщения
-        :param last_message_index: индекс последнего сообщения
+        :param count: количество сообщений
         """
 
         if self.stream is None:
@@ -159,27 +161,25 @@ class Client:
         if self._id is None:
             raise ClientNotAuthorizedException()
 
-        await self.stream.write(
-            packets.GetMessages(first_message_index, last_message_index)
+        response = await self.stream.make_request(
+            packets.GetMessages(random_id(), peer_id, first_message_index, count)
         )
 
-        raw_packet = await self.stream.read()
-
         if (
-            packet := Packet.try_deserialize(raw_packet, packets.GetMessagesSuccess)
+            packet := Packet.try_deserialize(response, packets.GetMessagesSuccess)
         ) is not None:
             return packet.messages
         elif (
-            Packet.try_deserialize(raw_packet, packets.GetMessagesFailInvalidRange)
+            Packet.try_deserialize(response, packets.GetMessagesFailInvalidRange)
             is not None
         ):
             raise InvalidRangeException()
         else:
             raise ProtocolException()
 
-    async def download_messages(self):
+    async def get_channel_peers(self) -> list[Id]:
         """
-        Вызывает ``self.on_message`` для каждого сообщения из ``self.get_messages()``
+        Возвращает список ID клиентов, с которыми клиент состоит в канале.
         """
 
         if self.stream is None:
@@ -188,9 +188,31 @@ class Client:
         if self._id is None:
             raise ClientNotAuthorizedException()
 
-        messages_count = await self.get_messages_count()
+        response = await self.stream.make_request(packets.GetChannelPeers(random_id()))
 
-        for message in await self.get_messages(0, messages_count - 1):
+        if (
+            packet := Packet.try_deserialize(response, packets.GetChannelPeersSuccess)
+        ) is not None:
+            return packet.peers
+        else:
+            raise ProtocolException()
+
+    async def download_messages(self, peer_id: Id):
+        """
+        Вызывает ``self.on_message`` для каждого сообщения из ``self.get_messages(peer_id, 0, self.get_messages_count(peer_id))``
+
+        :param peer_id: ID собеседника
+        """
+
+        if self.stream is None:
+            raise ClientNotConnectedException()
+
+        if self._id is None:
+            raise ClientNotAuthorizedException()
+
+        messages_count = await self.get_messages_count(peer_id)
+
+        for message in await self.get_messages(peer_id, 0, messages_count):
             if self.on_message is not None:
                 await self.on_message(message)
 
@@ -219,7 +241,7 @@ class Client:
                 key_exchange_result.peer_nonce,
             )
         )
-        self.stream.callbacks[packets.NewMessage] = self._on_message
+        self.stream.incoming_packet_callbacks[packets.NewMessage] = self._on_message
 
     async def disconnect(self):
         """
@@ -235,4 +257,4 @@ class Client:
 
     async def _on_message(self, packet: packets.NewMessage):
         if self.on_message is not None:
-            await self.on_message(packet.content)
+            await self.on_message(packet.message)

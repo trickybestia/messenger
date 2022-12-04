@@ -6,6 +6,7 @@ from asyncio import (
     start_server,
 )
 from asyncio.queues import Queue
+from contextlib import suppress
 from typing import Final
 
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
@@ -22,7 +23,11 @@ from network.streams.simple_packet_splitter_stream import SimplePacketSplitterSt
 from network.streams.stream import StreamClosedException
 
 from .database import Database
-from .database.exceptions import ClientNotExistsException, InvalidRangeException
+from .database.exceptions import (
+    ChannelNotExistsException,
+    ClientNotExistsException,
+    InvalidRangeException,
+)
 from .exceptions import LoginFailException
 
 
@@ -48,27 +53,23 @@ class Server:
 
         await server.serve_forever()
 
-    async def _register_or_login(self, stream: PacketStream) -> Id:
+    async def _authorize(self, stream: PacketStream) -> Id:
         """
         Регистрирует или авторизует клиента и возвращает его ID.
 
         :param stream: поток пакетов
         """
 
-        while True:
-            raw_packet = await stream.read()
+        raw_packet = await stream.read()
 
-            if (
-                packet := Packet.try_deserialize(raw_packet, packets.Register)
-            ) is not None:
-                client_id = self._database.register_client(packet.password)
+        if (packet := Packet.try_deserialize(raw_packet, packets.Register)) is not None:
+            client_id = self._database.register_client(packet.password)
 
-                await stream.write(packets.RegisterSuccess(client_id))
+            await stream.write(packets.RegisterSuccess(client_id))
 
-                return client_id
-            elif (
-                packet := Packet.try_deserialize(raw_packet, packets.Login)
-            ) is not None:
+            return client_id
+        if (packet := Packet.try_deserialize(raw_packet, packets.Login)) is not None:
+            try:
                 if (
                     packet.id not in self._incoming_message_queues
                     and self._database.check_password(packet.id, packet.password)
@@ -80,8 +81,12 @@ class Server:
                     await stream.write(packets.LoginFail())
 
                     raise LoginFailException()
-            else:
-                raise ProtocolException()
+            except ClientNotExistsException:
+                await stream.write(packets.LoginFail())
+
+                raise LoginFailException()
+        else:
+            raise ProtocolException()
 
     async def _handle_connection(self, reader: StreamReader, writer: StreamWriter):
         """
@@ -91,105 +96,113 @@ class Server:
         :param writer: записывающий поток
         """
 
-        stream = SimplePacketSplitterStream(reader, writer)
-        key_exchange_result = await accept_key_exchange(stream, self._key)
-        stream = PacketStream(
-            EncryptedPacketSplitterStream(
-                stream,
-                key_exchange_result.key,
-                key_exchange_result.our_nonce,
-                key_exchange_result.peer_nonce,
+        with suppress(StreamClosedException, ProtocolException, LoginFailException):
+            stream = SimplePacketSplitterStream(reader, writer)
+            key_exchange_result = await accept_key_exchange(stream, self._key)
+            stream = PacketStream(
+                EncryptedPacketSplitterStream(
+                    stream,
+                    key_exchange_result.key,
+                    key_exchange_result.our_nonce,
+                    key_exchange_result.peer_nonce,
+                )
             )
-        )
+
+            client_id = await self._authorize(stream)
+
+            await self._handle_authorized_connection(stream, client_id)
+
+        if not stream.is_closed():
+            await stream.close()
+
+    async def _handle_authorized_connection(self, stream: PacketStream, client_id: Id):
+        incoming_message_queue = Queue()
+        self._incoming_message_queues[client_id] = incoming_message_queue
+
+        async def handle_incoming_messages():
+            while True:
+                try:
+                    message = await incoming_message_queue.get()
+
+                    await stream.write(packets.NewMessage(message))
+                except CancelledError:
+                    break
+
+        incoming_messages_handler = create_task(handle_incoming_messages())
 
         try:
-            client_id = await self._register_or_login(stream)
+            while True:
+                raw_packet = await stream.read()
 
-            incoming_message_queue = Queue()
-            self._incoming_message_queues[client_id] = incoming_message_queue
-
-            async def handle_incoming_messages():
-                while True:
+                if (
+                    packet := Packet.try_deserialize(
+                        raw_packet, packets.GetMessagesCount
+                    )
+                ) is not None:
                     try:
-                        message = await incoming_message_queue.get()
-
-                        await stream.write(packets.NewMessage(message))
-                    except CancelledError:
-                        break
-
-            incoming_messages_handler = create_task(handle_incoming_messages())
-
-            try:
-                while True:
-                    raw_packet = await stream.read()
-
-                    if (
-                        packet := Packet.try_deserialize(
-                            raw_packet, packets.GetMessagesCount
-                        )
-                    ) is not None:
                         messages_count = self._database.get_messages_count(
-                            ChannelId.from_clients((client_id, packet.peer_id))
+                            ChannelId.from_ids((client_id, packet.peer_id))
                         )
-
+                    except ChannelNotExistsException:
+                        await stream.write(
+                            packets.GetMessagesCountFailNoSuchChannel(packet.request_id)
+                        )
+                    else:
                         await stream.write(
                             packets.GetMessagesCountSuccess(
-                                messages_count, packet.request_id
+                                packet.request_id, messages_count
                             )
                         )
-                    elif (
-                        packet := Packet.try_deserialize(
-                            raw_packet, packets.SendMessage
-                        )
-                    ) is not None:
-                        try:
-                            self._database.add_message(
-                                client_id, packet.receiver_id, packet.content
-                            )
 
-                            if packet.receiver_id in self._incoming_message_queues:
-                                await self._incoming_message_queues[
-                                    packet.receiver_id
-                                ].put(Message(client_id, packet.content))
-                        except ClientNotExistsException:
-                            await stream.write(
-                                packets.SendMessageFailNoSuchClient(packet.request_id)
-                            )
-                        else:
-                            await stream.write(
-                                packets.SendMessageSuccess(packet.request_id)
-                            )
-                    elif (
-                        packet := Packet.try_deserialize(
-                            raw_packet, packets.GetMessages
+                elif (
+                    packet := Packet.try_deserialize(raw_packet, packets.SendMessage)
+                ) is not None:
+                    try:
+                        self._database.add_message(
+                            client_id, packet.receiver_id, packet.content
                         )
-                    ) is not None:
-                        try:
-                            messages = self._database.get_messages(
-                                ChannelId.from_clients((client_id, packet.peer_id)),
-                                packet.first_message_index,
-                                packet.count,
-                            )
-                        except InvalidRangeException:
-                            await stream.write(
-                                packets.GetMessagesFailInvalidRange(packet.request_id)
-                            )
-                        else:
-                            await stream.write(
-                                packets.GetMessagesSuccess(packet.request_id, messages)
-                            )
-                    elif (
-                        packet := Packet.try_deserialize(
-                            raw_packet, packets.GetChannelPeers
+                    except ClientNotExistsException:
+                        await stream.write(
+                            packets.SendMessageFailNoSuchClient(packet.request_id)
                         )
-                    ) is not None:
-                        peers = self._database.get_channel_peers(client_id)
-
-                        await stream.write(packets.GetChannelPeersSuccess(packet.request_id, peers))
                     else:
-                        raise ProtocolException()
-            finally:
-                incoming_messages_handler.cancel()
-                del self._incoming_message_queues[client_id]
-        except StreamClosedException:
-            ...
+                        if packet.receiver_id in self._incoming_message_queues:
+                            await self._incoming_message_queues[packet.receiver_id].put(
+                                Message(client_id, packet.content)
+                            )
+
+                        await stream.write(
+                            packets.SendMessageSuccess(packet.request_id)
+                        )
+                elif (
+                    packet := Packet.try_deserialize(raw_packet, packets.GetMessages)
+                ) is not None:
+                    try:
+                        messages = self._database.get_messages(
+                            ChannelId.from_ids((client_id, packet.peer_id)),
+                            packet.first_message_index,
+                            packet.count,
+                        )
+                    except InvalidRangeException:
+                        await stream.write(
+                            packets.GetMessagesFailInvalidRange(packet.request_id)
+                        )
+                    else:
+                        await stream.write(
+                            packets.GetMessagesSuccess(packet.request_id, messages)
+                        )
+                elif (
+                    packet := Packet.try_deserialize(
+                        raw_packet, packets.GetChannelPeers
+                    )
+                ) is not None:
+                    peers = self._database.get_channel_peers(client_id)
+
+                    await stream.write(
+                        packets.GetChannelPeersSuccess(packet.request_id, peers)
+                    )
+                else:
+                    raise ProtocolException()
+        finally:
+            incoming_messages_handler.cancel()
+            del self._incoming_message_queues[client_id]

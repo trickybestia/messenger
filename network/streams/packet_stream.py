@@ -1,6 +1,6 @@
 from asyncio import Event, create_task
 from asyncio.queues import Queue
-from typing import Awaitable, Callable, Final
+from typing import Awaitable, Callable, Final, Optional
 
 from msgpack import unpackb
 
@@ -14,7 +14,7 @@ from .stream import Stream, StreamClosedException
 
 class PacketStream(Stream):
     _stream: Final[PacketSplitterStream[bytes]]
-    _packets: Final[Queue[dict]]
+    _packets: Final[Queue[dict | None]]
     _request_callbacks: Final[dict[Id, Callable[[dict], Awaitable]]]
 
     incoming_packet_callbacks: Final[
@@ -50,7 +50,7 @@ class PacketStream(Stream):
         :param packet: пакет
         """
 
-        response = None
+        response: Optional[dict] = None
         response_received_event = Event()
 
         async def callback(raw_response: dict):
@@ -90,8 +90,8 @@ class PacketStream(Stream):
                         break
                 else:
                     await self._packets.put(raw_packet)
-
             except StreamClosedException:
+                await self._packets.put(None)
                 break
 
     async def write(self, packet: Packet):
@@ -100,7 +100,15 @@ class PacketStream(Stream):
         await self._stream.write(packet_bytes)
 
     async def read(self) -> dict:
-        return await self._packets.get()
+        if self._packets.empty() and self._stream.is_closed():
+            raise StreamClosedException()
+
+        packet = await self._packets.get()
+
+        if packet is None:
+            raise StreamClosedException()
+
+        return packet
 
     async def close(self):
         await self._stream.close()

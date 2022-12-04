@@ -8,3 +8,9 @@ class InvalidRangeException(Exception):
     """
     Переданный диапазон не является допустимым.
     """
+
+
+class ChannelNotExistsException(Exception):
+    """
+    Указанный канал не существует.
+    """

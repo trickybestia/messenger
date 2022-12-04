@@ -12,8 +12,8 @@ class ChannelId:
     """
 
     @classmethod
-    def from_clients(cls, clients: Tuple[Id, Id]):
-        if clients[0] > clients[1]:
-            return cls(clients)
+    def from_ids(cls, ids: Tuple[Id, Id]):
+        if ids[1] > ids[0]:
+            return cls(ids)
 
-        return cls((clients[1], clients[0]))
+        return cls((ids[1], ids[0]))

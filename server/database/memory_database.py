@@ -3,7 +3,11 @@ from typing import Final
 from model import ChannelId, Id, Message, random_id
 
 from .database import Database
-from .exceptions import ClientNotExistsException, InvalidRangeException
+from .exceptions import (
+    ChannelNotExistsException,
+    ClientNotExistsException,
+    InvalidRangeException,
+)
 
 
 class MemoryDatabase(Database):
@@ -41,7 +45,7 @@ class MemoryDatabase(Database):
         if receiver_id not in self._clients or sender_id not in self._clients:
             raise ClientNotExistsException()
 
-        channel_id = ChannelId((sender_id, receiver_id))
+        channel_id = ChannelId.from_ids((sender_id, receiver_id))
 
         if channel_id not in self._messages:
             self._messages[channel_id] = []
@@ -49,32 +53,23 @@ class MemoryDatabase(Database):
         self._messages[channel_id].append(Message(sender_id, content))
 
     def get_messages_count(self, channel_id: ChannelId) -> int:
-        if (
-            channel_id.clients[0] not in self._clients
-            or channel_id.clients[1] not in self._clients
-        ):
-            raise ClientNotExistsException()
-
         if channel_id not in self._messages:
-            return 0
+            raise ChannelNotExistsException()
 
         return len(self._messages[channel_id])
 
     def get_messages(
         self, channel_id: ChannelId, first_message_index: int, count: int
     ) -> list[Message]:
-        if (
-            channel_id.clients[0] not in self._clients
-            or channel_id.clients[1] not in self._clients
-        ):
-            raise ClientNotExistsException()
+        if channel_id not in self._messages:
+            raise ChannelNotExistsException()
 
         messages = self._messages[channel_id]
 
         if (
             first_message_index < 0
             or count < 0
-            or first_message_index + count >= len(messages)
+            or first_message_index + count > len(messages)
         ):
             raise InvalidRangeException()
 

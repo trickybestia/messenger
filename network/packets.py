@@ -49,6 +49,11 @@ class GetMessagesCountSuccess(RequestPacket):
 
 
 @dataclass(frozen=True)
+class GetMessagesCountFailNoSuchChannel(RequestPacket):
+    request_id: Id
+
+
+@dataclass(frozen=True)
 class SendMessage(RequestPacket):
     request_id: Id
     receiver_id: Id

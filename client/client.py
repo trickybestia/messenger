@@ -197,6 +197,85 @@ class Client:
         else:
             raise ProtocolException()
 
+    async def set_encryption_keys_message(self, peer_id: Id, message_id: Id):
+        """
+        Задаёт ID сообщения, содержащего ключи шифрования
+        текущего клиента в канале с заданным клиентом.
+
+        :param peer_id: ID собеседника
+        :param message_id: ID сообщения, содержащего ключи шифрования текущего клиента
+        """
+
+        if self.stream is None:
+            raise ClientNotConnectedException()
+
+        if self._id is None:
+            raise ClientNotAuthorizedException()
+
+        response = await self.stream.make_request(
+            packets.SetEncryptionKeysMessage(random_id(), peer_id, message_id)
+        )
+
+        if (
+            Packet.try_deserialize(response, packets.SetEncryptionKeysMessageSuccess)
+            is not None
+        ):
+            return
+        elif (
+            Packet.try_deserialize(
+                response, packets.SetEncryptionKeysMessageFailNoSuchClient
+            )
+            is not None
+        ):
+            raise NoSuchClientException()
+        elif (
+            Packet.try_deserialize(
+                response, packets.SetEncryptionKeysMessageFailInvalidId
+            )
+            is not None
+        ):
+            raise InvalidIdException()
+        else:
+            raise ProtocolException()
+
+    async def get_encryption_keys_message(
+        self, peer_id: Id, keys_owner_id: Id
+    ) -> Optional[Id]:
+        """
+        Возвращает ID сообщения (или None, при отсутствии такового),
+        содержащего ключи шифрования сообщений за авторством
+        указанного клиента в канале с заданным клиентом.
+
+        :param peer_id: ID собеседника
+        :param keys_owner_id: ID клиента, которому принадлежат ключи шифрования
+        """
+
+        if self.stream is None:
+            raise ClientNotConnectedException()
+
+        if self._id is None:
+            raise ClientNotAuthorizedException()
+
+        response = await self.stream.make_request(
+            packets.GetEncryptionKeysMessage(random_id(), keys_owner_id, peer_id)
+        )
+
+        if (
+            packet := Packet.try_deserialize(
+                response, packets.GetEncryptionKeysMessageSuccess
+            )
+        ) is not None:
+            return packet.message_id
+        elif (
+            Packet.try_deserialize(
+                response, packets.GetEncryptionKeysMessageFailNoSuchClient
+            )
+            is not None
+        ):
+            raise NoSuchClientException()
+        else:
+            raise ProtocolException()
+
     async def download_messages(self, peer_id: Id):
         """
         Вызывает ``self.on_message`` для каждого сообщения из ``self.get_messages(peer_id, 0, self.get_messages_count(peer_id))``

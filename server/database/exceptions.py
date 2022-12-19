@@ -14,3 +14,9 @@ class ChannelNotExistsException(Exception):
     """
     Указанный канал не существует.
     """
+
+
+class InvalidIdException(Exception):
+    """
+    Указанный ID не является верным.
+    """

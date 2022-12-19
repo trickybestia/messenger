@@ -26,6 +26,7 @@ from .database import Database
 from .database.exceptions import (
     ChannelNotExistsException,
     ClientNotExistsException,
+    InvalidIdException,
     InvalidRangeException,
 )
 from .exceptions import LoginFailException
@@ -145,7 +146,7 @@ class Server:
                         )
                     except ChannelNotExistsException:
                         await stream.write(
-                            packets.GetMessagesCountFailNoSuchChannel(packet.request_id)
+                            packets.GetMessagesCountFailNoSuchClient(packet.request_id)
                         )
                     else:
                         await stream.write(
@@ -201,6 +202,56 @@ class Server:
                     await stream.write(
                         packets.GetChannelPeersSuccess(packet.request_id, peers)
                     )
+                elif (
+                    packet := Packet.try_deserialize(
+                        raw_packet, packets.SetEncryptionKeysMessage
+                    )
+                ) is not None:
+                    try:
+                        channel_id = ChannelId.from_ids((client_id, packet.peer_id))
+
+                        self._database.set_encryption_keys_message(
+                            channel_id, client_id, packet.message_id
+                        )
+                    except (ClientNotExistsException, ChannelNotExistsException):
+                        await stream.write(
+                            packets.SetEncryptionKeysMessageFailNoSuchClient(
+                                packet.request_id
+                            )
+                        )
+                    except InvalidIdException:
+                        await stream.write(
+                            packets.SetEncryptionKeysMessageFailInvalidId(
+                                packet.request_id
+                            )
+                        )
+                    else:
+                        await stream.write(
+                            packets.SetEncryptionKeysMessageSuccess(packet.request_id)
+                        )
+                elif (
+                    packet := Packet.try_deserialize(
+                        raw_packet, packets.GetEncryptionKeysMessage
+                    )
+                ) is not None:
+                    channel_id = ChannelId.from_ids((client_id, packet.peer_id))
+
+                    try:
+                        result = self._database.get_encryption_keys_message(
+                            channel_id, packet.keys_owner_id
+                        )
+                    except (ChannelNotExistsException, ClientNotExistsException):
+                        await stream.write(
+                            packets.GetEncryptionKeysMessageFailNoSuchClient(
+                                packet.request_id
+                            )
+                        )
+                    else:
+                        await stream.write(
+                            packets.GetEncryptionKeysMessageSuccess(
+                                packet.request_id, result
+                            )
+                        )
                 else:
                     raise ProtocolException()
         finally:

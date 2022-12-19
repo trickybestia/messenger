@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import Optional
 
 from model import Id, Message
 
@@ -49,7 +50,7 @@ class GetMessagesCountSuccess(RequestPacket):
 
 
 @dataclass(frozen=True)
-class GetMessagesCountFailNoSuchChannel(RequestPacket):
+class GetMessagesCountFailNoSuchClient(RequestPacket):
     request_id: Id
 
 
@@ -103,3 +104,43 @@ class GetChannelPeers(RequestPacket):
 class GetChannelPeersSuccess(RequestPacket):
     request_id: Id
     peers: list[Id]
+
+
+@dataclass(frozen=True)
+class SetEncryptionKeysMessage(RequestPacket):
+    request_id: Id
+    peer_id: Id
+    message_id: Id
+
+
+@dataclass(frozen=True)
+class SetEncryptionKeysMessageSuccess(RequestPacket):
+    request_id: Id
+
+
+@dataclass(frozen=True)
+class SetEncryptionKeysMessageFailInvalidId(RequestPacket):
+    request_id: Id
+
+
+@dataclass(frozen=True)
+class SetEncryptionKeysMessageFailNoSuchClient(RequestPacket):
+    request_id: Id
+
+
+@dataclass(frozen=True)
+class GetEncryptionKeysMessage(RequestPacket):
+    request_id: Id
+    keys_owner_id: Id
+    peer_id: Id
+
+
+@dataclass(frozen=True)
+class GetEncryptionKeysMessageSuccess(RequestPacket):
+    request_id: Id
+    message_id: Optional[Id]
+
+
+@dataclass(frozen=True)
+class GetEncryptionKeysMessageFailNoSuchClient(RequestPacket):
+    request_id: Id

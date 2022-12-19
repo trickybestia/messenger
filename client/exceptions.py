@@ -38,3 +38,9 @@ class InvalidRangeException(Exception):
     """
     Переданный диапазон не является допустимым.
     """
+
+
+class InvalidIdException(Exception):
+    """
+    Указанный ID не является верным.
+    """

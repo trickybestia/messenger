@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from typing import Optional
 
 from model import ChannelId, Id, Message
 
@@ -65,4 +66,30 @@ class Database(ABC):
         Возвращает список ID клиентов, с которыми указанный клиент состоит в канале.
 
         :param client_id: ID клиента
+        """
+
+    @abstractmethod
+    def set_encryption_keys_message(
+        self, channel_id: ChannelId, keys_owner_id: Id, message_id: Id
+    ):
+        """
+        Изменяет ID сообщения, содержащего ключи шифрования сообщений
+        за авторством указанного клиента в заданном канале.
+
+        :param channel_id: ID канала
+        :param keys_owner_id: ID клиента, которому принадлежат ключи шифрования
+        :param message_id: ID сообщения
+        """
+
+    @abstractmethod
+    def get_encryption_keys_message(
+        self, channel_id: ChannelId, keys_owner_id: Id
+    ) -> Optional[Id]:
+        """
+        Возвращает ID сообщения (или None, при отсутствии такового),
+        содержащего ключи шифрования сообщений за авторством
+        указанного клиента в заданном канале.
+
+        :param channel_id: ID канала
+        :param keys_owner_id: ID клиента, которому принадлежат ключи шифрования
         """

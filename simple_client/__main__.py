@@ -1,13 +1,19 @@
 from argparse import ArgumentParser
 from asyncio import run
-from base64 import b64decode, b64encode
+from base64 import b64decode
 from contextlib import suppress
+from os import path, urandom
 
 from aioconsole import ainput
+from cryptography.hazmat.primitives.asymmetric.rsa import generate_private_key
 from cryptography.hazmat.primitives.serialization import load_der_public_key
 
 from client import Client
-from client.crypt import Credentials
+from client.client_info.private_client_info import PrivateClientInfo
+from client.client_info.serialization.serialization import (
+    deserialize_private_client_info,
+    serialize_private_client_info,
+)
 from model import Id, Message
 from network.streams.stream import StreamClosedException
 
@@ -18,43 +24,52 @@ from .format_message import MessageType, format_message
 async def main():
     argument_parser = ArgumentParser()
 
-    argument_parser.add_argument("--hostname", type=str, help="имя хоста сервера")
-    argument_parser.add_argument("--port", type=int, help="порт сервера")
     argument_parser.add_argument(
-        "--server-key",
+        "--client-info-path",
         type=str,
-        help="публичный ключ сервера в формате DER, закодированном Base 64",
-    )
-    argument_parser.add_argument("--password", type=str, help="мастер-пароль клиента")
-    argument_parser.add_argument(
-        "--client-id",
-        type=int,
-        nargs="?",
-        default=None,
-        help="ID клиента. Оставить пустым для регистрации",
+        required=True,
+        help="путь к файлу с информацией о клиенте. Если файла не существует, он будет создан при регистрации клиента",
     )
 
     args = argument_parser.parse_args()
 
-    server_key = load_der_public_key(b64decode(args.server_key, validate=True))
-    credentials = Credentials.from_master_password(args.password)
-    server_password = credentials.get_server_password(server_key)
-    client_id = args.client_id
-
     client = Client()
 
-    await client.connect(args.hostname, args.port, server_key)
+    if path.exists(args.client_info_path):
+        with open(args.client_info_path, "rb") as file:
+            data = file.read()
 
-    print(
-        f"Используемый пароль для аутентификации на сервере: {b64encode(server_password).decode('ascii')}"
-    )
+        client_info = deserialize_private_client_info(data)
 
-    if client_id is None:
-        await client.register(server_password)
+        print(f"Адрес сервера: {client_info.server_host}")
+        print(f"Порт сервера: {client_info.server_port}")
+        print(f"ID клиента: {client_info.id}")
+
+        await client.connect(
+            client_info.server_host, client_info.server_port, client_info.server_key
+        )
+        await client.login(client_info.id, client_info.server_password)
     else:
-        await client.login(client_id, server_password)
+        server_host = input("Введите адрес сервера: ")
+        server_port = int(input("Введите порт сервера: "))
+        server_key = input("Введите открытый ключ сервера: ")
+        server_key = load_der_public_key(b64decode(server_key, validate=True))
+        key = generate_private_key(public_exponent=65537, key_size=3072)
+        server_password = urandom(32)
 
-    print(f"Подключение успешно; ID клиента: {client.get_id()}")
+        await client.connect(server_host, server_port, server_key)
+        await client.register(server_password)
+
+        client_info = PrivateClientInfo(
+            client.get_id(), key, server_password, server_key, server_host, server_port
+        )
+
+        with open(args.client_info_path, "xb") as file:
+            file.write(serialize_private_client_info(client_info))
+
+        print(f"ID клиента: {client.get_id()}")
+
+    print("Введите help для вывода списка команд")
 
     async def on_message(message: Message):
         message_type, content = format_message(message.content)

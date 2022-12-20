@@ -46,7 +46,7 @@ class GetMessagesCount(RequestPacket):
 @dataclass(frozen=True)
 class GetMessagesCountSuccess(RequestPacket):
     request_id: Id
-    messages_count: int
+    messages_count: dict[Id, int]
 
 
 @dataclass(frozen=True)

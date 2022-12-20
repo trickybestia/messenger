@@ -91,9 +91,10 @@ class Client:
         else:
             raise ProtocolException()
 
-    async def get_messages_count(self, peer_id: Id) -> int:
+    async def get_messages_count(self, peer_id: Id) -> dict[Id, int]:
         """
-        Возвращает количество сообщений в канале с указанным собеседником.
+        Возвращает количество сообщений каждого участника
+        в канале с указанным собеседником.
 
         :param peer_id: ID собеседника
         """

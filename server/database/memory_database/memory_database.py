@@ -47,15 +47,15 @@ class MemoryDatabase(Database):
         channel_id = ChannelId.from_ids((sender_id, receiver_id))
 
         if channel_id not in self._channels:
-            self._channels[channel_id] = Channel()
+            self._channels[channel_id] = Channel(channel_id)
 
-        self._channels[channel_id].messages.append(Message(sender_id, content))
+        self._channels[channel_id].add_message(Message(sender_id, content))
 
-    def get_messages_count(self, channel_id: ChannelId) -> int:
+    def get_messages_count(self, channel_id: ChannelId) -> dict[Id, int]:
         if channel_id not in self._channels:
             raise ChannelNotExistsException()
 
-        return len(self._channels[channel_id].messages)
+        return self._channels[channel_id].messages_count
 
     def get_messages(
         self, channel_id: ChannelId, first_message_index: int, count: int
@@ -96,7 +96,7 @@ class MemoryDatabase(Database):
 
         channel = self._channels[channel_id]
 
-        if keys_owner_id not in channel:
+        if keys_owner_id not in channel_id.clients:
             raise ClientNotExistsException()
 
         if (
@@ -116,7 +116,7 @@ class MemoryDatabase(Database):
 
         channel = self._channels[channel_id]
 
-        if keys_owner_id not in channel:
+        if keys_owner_id not in channel_id.clients:
             raise ClientNotExistsException()
 
         if keys_owner_id not in channel.encryption_keys_messages:

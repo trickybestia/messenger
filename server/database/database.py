@@ -41,9 +41,9 @@ class Database(ABC):
         """
 
     @abstractmethod
-    def get_messages_count(self, channel_id: ChannelId) -> int:
+    def get_messages_count(self, channel_id: ChannelId) -> dict[Id, int]:
         """
-        Возвращает количество сообщений в канале.
+        Возвращает количество сообщений каждого участника в указанном канале.
 
         :param channel_id: ID канала
         """

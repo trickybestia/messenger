@@ -27,7 +27,7 @@ async def exchange_key(
     :return: результат обмена ключами
     """
 
-    key = urandom(16)
+    key = urandom(32)
 
     await stream.write(server_key.encrypt(key, OAEP(MGF1(SHA256()), SHA256(), None)))
 

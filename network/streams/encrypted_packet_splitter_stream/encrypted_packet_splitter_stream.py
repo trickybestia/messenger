@@ -35,7 +35,7 @@ class EncryptedPacketSplitterStream(PacketSplitterStream[bytes]):
 
         cipher = Cipher(
             AES(self._key),
-            CTR(self._our_nonce.to_bytes(len(self._key), "little", signed=True)),
+            CTR(self._our_nonce.to_bytes(16, "little", signed=True)),
         )
 
         if self._our_nonce > 0:
@@ -53,7 +53,7 @@ class EncryptedPacketSplitterStream(PacketSplitterStream[bytes]):
 
         cipher = Cipher(
             AES(self._key),
-            CTR(self._peer_nonce.to_bytes(len(self._key), "little", signed=True)),
+            CTR(self._peer_nonce.to_bytes(16, "little", signed=True)),
         )
 
         if self._peer_nonce > 0:
